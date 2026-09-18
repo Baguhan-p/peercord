@@ -71,3 +71,41 @@ export interface LogEntry {
   level: LogLevel;
   text: string;
 }
+
+/* ================================================================== */
+/* Phase 2 — Chat                                                      */
+/* ================================================================== */
+
+/** Channels that carry a persistent CRDT chat log. */
+export const CHAT_CHANNELS = ["general", "media"] as const;
+export type TextChannelId = (typeof CHAT_CHANNELS)[number];
+
+export function isChatChannel(id: string): id is TextChannelId {
+  return (CHAT_CHANNELS as readonly string[]).includes(id);
+}
+
+/** A single chat message as stored in the Yjs document. */
+export interface ChatMessage {
+  id: string;
+  channel: TextChannelId;
+  /** Stable peer id of the author (16-hex-char). */
+  author: string;
+  authorName: string;
+  text: string;
+  ts: number;
+}
+
+/**
+ * Yjs sync frames multiplexed over the existing WebRTC DataChannel.
+ *
+ *   sync1 — our state vector (what we already have)
+ *   sync2 — diff computed against the remote's state vector
+ *   update — incremental local change
+ *
+ * Binary payloads are base64-encoded so the frames stay valid UTF-8 JSON
+ * and reuse the existing text-mode DataChannel.
+ */
+export type YjsFrame =
+  | { t: "yjs"; ch: TextChannelId; k: "sync1"; sv: string }
+  | { t: "yjs"; ch: TextChannelId; k: "sync2"; diff: string }
+  | { t: "yjs"; ch: TextChannelId; k: "update"; u: string };

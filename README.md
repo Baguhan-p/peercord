@@ -1,174 +1,118 @@
-# PeerCord — Phase 1: Skeleton & Peer Discovery
+# PeerCord — Phase 2: CRDT Chat over Yjs
 
 Децентрализованный P2P-аналог Discord для локальной сети.
-**Фаза 1** реализует: каркас Tauri-приложения, mDNS-обнаружение пиров,
-TCP-сигналинг и первый WebRTC DataChannel между двумя инстансами.
+**Фаза 2** добавляет к сетевому ядру Фазы 1 распределённый текстовый чат
+на CRDT (Yjs) с локальной персистентностью через IndexedDB.
 
 ---
 
-## Архитектура Фазы 1
+## Что нового в Фазе 2
 
+- **CRDT-чат на Yjs** — каждое сообщение живёт в `Y.Array<Y.Map>`, отдельный
+  `Y.Doc` на канал. Никакого центрального сервера, никакого authoritative peer'а.
+- **Каналы `#general` и `#media`** с независимыми историями.
+- **Eventual consistency** — при подключении нового пира обе стороны
+  обмениваются state vectors (sync step 1 / step 2) и догоняют недостающие
+  операции. Оффлайн-сообщения подтягиваются при следующем контакте.
+- **IndexedDB persistence** — история пишется в `peercord-general` /
+  `peercord-media` в WebView2 storage и переживает перезапуск приложения.
+- **UI чата** в стиле Discord: список сообщений, группировка, авто-скролл,
+  `Enter` для отправки, `Shift+Enter` — перенос строки.
+
+---
+
+## Синхронизация: протокол
+
+Yjs поверх существующего WebRTC DataChannel. Фреймы — обычные JSON-строки:
+
+```jsonc
+{ "t": "yjs", "ch": "general", "k": "sync1",  "sv":   "<base64>" }
+{ "t": "yjs", "ch": "general", "k": "sync2",  "diff": "<base64>" }
+{ "t": "yjs", "ch": "general", "k": "update", "u":    "<base64>" }
 ```
 
-┌─────────────────────────── PeerCord Instance A ───────────────────────────┐
-│                                                                            │
-│  React UI (Zustand)                                                        │
-│      │  invoke()                        ▲ emit("peer:found")               │
-│      ▼                                  │                                  │
-│  ┌───────────────── Tauri Core (Rust) ──┴───────────────────────────────┐  │
-│  │  discovery.rs   →  mdns-sd  →  _peercord._tcp.local.  (LAN broadcast)│  │
-│  │  signaling.rs   →  TCP listener on random port (line-delimited JSON) │  │
-│  └──────────────────────────────────────────────────────────────────────┘  │
-│      │                                                                     │
-│      ▼                                                                     │
-│  peerManager.ts → RTCPeerConnection (perfect negotiation) → DataChannel    │
-└────────────────────────────────────────────────────────────────────────────┘
-▲
-mDNS + TCP signaling (no central server)
-▼
-┌─────────────────────────── PeerCord Instance B ───────────────────────────┐
-└────────────────────────────────────────────────────────────────────────────┘
+Обмен происходит в три шага:
+
+1. При открытии DataChannel каждый узел шлёт `sync1` с собственным state vector
+для каждого канала.
+2. Получив `sync1`, узел вычисляет `Y.encodeStateAsUpdate(doc, remote_sv)` и
+отправляет обратно как `sync2`. Применяя его — догоняет всё, что пропустил.
+3. Все локальные изменения (`doc.on("update")` с origin ≠ remote) рассылаются
+всем открытым каналам как `update`.
+
+Локальные изменения, загруженные из IndexedDB при старте, тоже рассылаются —
+это даёт новому пиру историю без дополнительного запроса.
+
+---
+
+## Структура Фазы 2
 
 ```
-
-### Обмен SDP/ICE
-1. Оба инстанса регистрируют mDNS-сервис `_peercord._tcp.local.` с TXT-записями
-   `peer_id`, `name`, `port` (порт TCP-сигналинга).
-2. При обнаружении пира каждый клиент открывает `RTCPeerConnection`.
-   Инициатор определяется детерминированно: `selfId < peerId` → impolite (создаёт offer + DataChannel).
-3. SDP/ICE передаются напрямую по TCP (`send_signal`), без сервера.
-
----
-
-## Требования
-
-- **Rust** ≥ 1.77 (`rustup`)
-- **Node.js** ≥ 18
-- **Tauri CLI v2**: `cargo install tauri-cli --version "^2.0"` (или используйте `npx tauri`)
-
-Системные зависимости Tauri: см. https://tauri.app/start/prerequisites/
+src/
+├─ components/
+│  ├─ ChatPanel.tsx          # список сообщений + input
+│  ├─ MessageItem.tsx        # одна реплика (аватар, автор, время, текст)
+│  └─ … (остальное из Фазы 1)
+├─ lib/
+│  └─ types.ts               # + ChatMessage, YjsFrame, isChatChannel
+├─ services/
+│  ├─ chatService.ts         # Y.Doc + IndexedDB + sendMessage + observers
+│  ├─ syncChannel.ts         # Yjs ⇄ DataChannel
+│  ├─ peerManager.ts         # + onLinkOpen, onMessage, sendToPeer
+│  └─ … (остальное из Фазы 1)
+└─ store/
+   └─ useChatStore.ts        # Zustand: messages, drafts
+```
 
 ---
 
-## Установка
+## Запуск (не изменился с Фазы 1)
 
-```bash
-cd peercord
+```
 npm install
-```
-
-### Иконки
-
-Tauri требует набор иконок в `src-tauri/icons/`. Сгенерируйте их из любого PNG 1024×1024:
-
-```
-npx tauri icon ./path/to/logo.png
-```
-
-(Либо скопируйте дефолтные иконки из `create-tauri-app`.)
-
----
-
-## Запуск
-
-### Первый инстанс
-
-```
 npm run tauri dev
 ```
 
-### Второй инстанс (для проверки P2P)
-
-Vite-дев-сервер уже занят первым инстансом, поэтому запускаем второй экземпляр
-бинаря напрямую:
+Второе окно:
 
 ```
-# после первой сборки:
-./src-tauri/target/debug/peercord
+.\src-tauri\target\debug\peercord.exe
 ```
 
-> На Windows: `src-tauri\target\debug\peercord.exe`
-> На macOS: `src-tauri/target/debug/peercord`
-
-Оба окна должны автоматически обнаружить друг друга и установить DataChannel
-(статус `connected` в правом сайдбаре). Кнопка **Broadcast** отправляет
-тестовый пакет по всем открытым каналам — он появится в логе второго окна.
+Оба окна обнаружат друг друга через mDNS + ручной connect (см. README Фазы 1).
+После `connected` можно открыть `#general`, написать сообщение — оно появится
+у второго пира мгновенно.
 
 ---
 
-## Структура проекта
+## Проверка Фазы 2
 
-```
-peercord/
-├─ src/                          # Frontend (React + TS)
-│  ├─ components/                # UI-компоненты (стиль Discord)
-│  │  ├─ ServerRail.tsx
-│  │  ├─ ChannelSidebar.tsx
-│  │  ├─ TopBar.tsx
-│  │  ├─ NetworkPanel.tsx        # ядро Фазы 1: пиры + лог
-│  │  ├─ MemberSidebar.tsx
-│  │  └─ StatusBar.tsx
-│  ├─ lib/
-│  │  ├─ types.ts                # общие типы
-│  │  └─ tauriBridge.ts          # обёртка над invoke/listen
-│  ├─ services/
-│  │  ├─ peerLink.ts             # RTCPeerConnection + DataChannel
-│  │  ├─ peerManager.ts          # оркестрация связей
-│  │  └─ bootstrap.ts            # старт узла + подписки на события
-│  ├─ store/
-│  │  └─ useAppStore.ts          # Zustand
-│  ├─ App.tsx
-│  ├─ main.tsx
-│  └─ styles.css
-└─ src-tauri/                    # Backend (Rust)
-   ├─ src/
-   │  ├─ main.rs
-   │  ├─ lib.rs                  # Tauri commands + state
-   │  ├─ discovery.rs            # mDNS (mdns-sd)
-   │  └─ signaling.rs            # TCP signaling server
-   ├─ capabilities/default.json
-   ├─ Cargo.toml
-   ├─ build.rs
-   └─ tauri.conf.json
-```
+1. Запусти оба окна, дождись `connected`.
+2. В первом окне кликни `#general`, напиши `привет`, Enter.
+3. Во втором окне — карточка пира стала зелёной, открой `#general` → увидишь
+то же сообщение.
+4. Напиши что-то во втором окне, проверь в первом.
+5. **Тест персистентности:** закрой оба окна, запусти заново, открой `#general` —
+история на месте (IndexedDB).
+6. **Тест eventual consistency:** пока одно окно закрыто, напиши 2–3 сообщения
+во втором. Запусти первое — при подключении оно должно подтянуть пропущенное.
 
 ---
 
-## Tauri Commands (Фаза 1)
+## Что дальше (не входит в Фазу 2)
 
-| Command ↕▾ | Аргументы ↕▾ | Возврат ↕▾ |
-|---|---|---|
-| −`start_node` | `peerId`, `displayName` | `{ peerId, displayName, signalPort }` |
-| −`stop_node` | — | `void` |
-| −`get_node_info` | — | `NodeInfo | null` |
-| −`send_signal` | `addr`, `port`, `message` | `void` |
-⚙
-
-## Tauri Events (Фаза 1)
-
-| Event ↕▾ | Payload ↕▾ |
-|---|---|
-| −`peer:found` | `{ peerId, displayName, address, port, fullname }` |
-| −`peer:lost` | `{ peerId, fullname }` |
-| −`signal:incoming` | `{ from, fromName, fromSignalPort, kind, payload, addr }` |
-⚙
-
----
-
-## Что дальше (не входит в Фазу 1)
-
-- **Фаза 2** — Yjs поверх DataChannel, каналы `#general` / `#media`, SQLite-кэш
 - **Фаза 3** — Voice Mesh (Opus, VAD, PTT, индикация говорящего)
 - **Фаза 4** — Screen Share + синхронный YouTube-плеер
-- **Фаза 5** — полировка UI, обработка реконнектов
+- **Фаза 5** — полировка UI, обработка дисконнектов, постоянная идентичность
 
 ---
 
-## Отладка
+## Технические заметки
 
-- Логи Rust: `RUST_LOG=debug npm run tauri dev`
-- Если пиры не находят друг друга — проверьте, что firewall не блокирует
-**UDP 5353** (mDNS) и входящие TCP-соединения на случайном порту сигналинга.
-- В корпоративных сетях multicast может быть отключён — тогда нужен ручной
-ввод IP (будет добавлено в Фазе 5).
+- Yjs update'ы кодируются в base64 и летят как строки. Для больших историй
+(>64KB) понадобится чанкинг — пока хватает встроенного лимита DataChannel.
+- Один и тот же `Y.Doc` не пересоздаётся между HMR-перезагрузками Vite:
+документы хранятся в модульной `Map` и переживают горячую замену.
+- При `Ctrl+R` в окне WebView2 документы пересоздаются заново, но IndexedDB
+подтягивает историю мгновенно.
 

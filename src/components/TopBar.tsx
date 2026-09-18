@@ -1,12 +1,14 @@
-/** Channel header — identity, mDNS status, manual connect, broadcast action. */
+/** Channel header — context-aware title, network status, debug actions. */
 import { useState } from "react";
-import { Link2, Network, Radio, Send, Trash2 } from "lucide-react";
+import { Hash, Link2, Network, Radio, Send, Trash2 } from "lucide-react";
 import { useAppStore } from "../store/useAppStore";
+import { isChatChannel } from "../lib/types";
 import { peerManager } from "../services/peerManager";
 
 export default function TopBar() {
   const ready = useAppStore((s) => s.ready);
   const nodeInfo = useAppStore((s) => s.nodeInfo);
+  const activeChannel = useAppStore((s) => s.activeChannel);
   const clearLogs = useAppStore((s) => s.clearLogs);
   const log = useAppStore((s) => s.log);
   const connected = useAppStore(
@@ -16,11 +18,14 @@ export default function TopBar() {
   const [showManual, setShowManual] = useState(false);
   const [manual, setManual] = useState("");
 
+  const isChat = isChatChannel(activeChannel);
+  const HeaderIcon = isChat ? Hash : Network;
+
   const handleBroadcast = () => {
     const payload = JSON.stringify({
       t: "test",
       ts: Date.now(),
-      body: "hello from PeerCord Phase 1",
+      body: "hello from PeerCord Phase 2",
     });
     const delivered = peerManager.broadcast(payload);
     log(`▶ broadcast → ${delivered} channel(s)`, "net");
@@ -44,8 +49,8 @@ export default function TopBar() {
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b border-d-950/50 px-4 shadow-sm">
-      <Network size={20} className="text-d-300" />
-      <h1 className="text-[15px] font-semibold">network</h1>
+      <HeaderIcon size={20} className="text-d-300" />
+      <h1 className="text-[15px] font-semibold">{activeChannel}</h1>
 
       <div className="mx-2 h-6 w-px bg-d-700" />
 
@@ -109,7 +114,7 @@ export default function TopBar() {
         onClick={handleBroadcast}
         disabled={connected === 0}
         className="flex items-center gap-1.5 rounded bg-d-accent px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-d-accent-hover disabled:cursor-not-allowed disabled:bg-d-600 disabled:text-d-400"
-        title="Send a test payload over every open DataChannel"
+        title="Send a raw test payload over every open DataChannel"
       >
         <Send size={14} />
         Broadcast

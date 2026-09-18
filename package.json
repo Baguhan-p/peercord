@@ -1,9 +1,9 @@
 {
   "name": "peercord",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
-  "description": "Decentralized P2P LAN alternative to Discord — Phase 1: Skeleton & mDNS discovery",
+  "description": "Decentralized P2P LAN alternative to Discord — Phase 2: CRDT chat over Yjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
@@ -18,6 +18,8 @@
     "lucide-react": "^0.454.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "y-indexeddb": "^9.0.12",
+    "yjs": "^13.6.20",
     "zustand": "^5.0.1"
   },
   "devDependencies": {

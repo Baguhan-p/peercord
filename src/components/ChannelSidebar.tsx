@@ -3,10 +3,18 @@ import { ChevronDown, Hash, Network, Volume2 } from "lucide-react";
 import clsx from "clsx";
 import { useAppStore } from "../store/useAppStore";
 
-const CHANNELS = [
+interface ChannelDef {
+  id: string;
+  label: string;
+  icon: typeof Hash;
+  /** when set, channel is a placeholder for a later phase */
+  phase?: number;
+}
+
+const CHANNELS: ChannelDef[] = [
   { id: "network", label: "network", icon: Network },
-  { id: "general", label: "general", icon: Hash, phase: 2 },
-  { id: "media", label: "media", icon: Hash, phase: 2 },
+  { id: "general", label: "general", icon: Hash },
+  { id: "media", label: "media", icon: Hash },
   { id: "voice", label: "Voice Lounge", icon: Volume2, phase: 3 },
 ];
 
@@ -41,7 +49,7 @@ export default function ChannelSidebar() {
               key={ch.id}
               onClick={() => !locked && setActiveChannel(ch.id)}
               disabled={locked}
-              title={locked ? `Available in Phase ${ch.phase}` : ch.label}
+              title={locked ? `Available in Phase ${ch.phase}` : `#${ch.label}`}
               className={clsx(
                 "group mb-0.5 flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-[15px] transition-colors",
                 isActive

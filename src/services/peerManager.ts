@@ -1,6 +1,12 @@
 /**
  * PeerManager — single source of truth for live peer connections.
  *
+ * Responsibilities:
+ *   • turn discovery / signaling events into PeerLink instances
+ *   • decide who initiates the offer (deterministic, no glare)
+ *   • mirror link state / RTT into the Zustand store
+ *   • expose pub/sub hooks for higher layers (chat sync, presence, …)
+ *
  * Supports two ways to establish a link:
  *   • mDNS auto-discovery (peer:found event)
  *   • manual connect by IP:port (bypasses mDNS entirely — useful on Windows
@@ -28,14 +34,23 @@ interface LinkInfo {
   displayName: string;
 }
 
-/** Prefix for synthetic peer-ids created by manual connect. 'z' > any hex char,
- *  so the initiator election always picks us as impolite (we send the offer). */
+type LinkOpenListener = (peerId: string) => void;
+type MessageListener = (peerId: string, data: string) => void;
+
+/** Prefix for synthetic peer-ids created by manual connect. */
 const MANUAL_PREFIX = "zz-manual-";
 
 class PeerManager {
   private links = new Map<string, PeerLink>();
   private info = new Map<string, LinkInfo>();
   private ctx: ManagerContext | null = null;
+
+  private linkOpenListeners = new Set<LinkOpenListener>();
+  private messageListeners = new Set<MessageListener>();
+
+  /* ---------------------------------------------------------------- */
+  /* Configuration                                                     */
+  /* ---------------------------------------------------------------- */
 
   configure(ctx: ManagerContext): void {
     this.ctx = ctx;
@@ -46,6 +61,24 @@ class PeerManager {
     this.links.clear();
     this.info.clear();
     this.ctx = null;
+    this.linkOpenListeners.clear();
+    this.messageListeners.clear();
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Pub/sub                                                           */
+  /* ---------------------------------------------------------------- */
+
+  /** Fires once per peer, after its DataChannel becomes usable. */
+  onLinkOpen(cb: LinkOpenListener): () => void {
+    this.linkOpenListeners.add(cb);
+    return () => this.linkOpenListeners.delete(cb);
+  }
+
+  /** Fires for every incoming application-level payload (post ping/pong). */
+  onMessage(cb: MessageListener): () => void {
+    this.messageListeners.add(cb);
+    return () => this.messageListeners.delete(cb);
   }
 
   /* ---------------------------------------------------------------- */
@@ -197,9 +230,16 @@ class PeerManager {
   }
 
   /* ---------------------------------------------------------------- */
-  /* Application payloads                                              */
+  /* Transport                                                         */
   /* ---------------------------------------------------------------- */
 
+  /** Send a raw string to one specific peer. Returns false if not open. */
+  sendToPeer(peerId: string, text: string): boolean {
+    const link = this.links.get(peerId);
+    return link ? link.sendText(text) : false;
+  }
+
+  /** Send a raw string to every open DataChannel. Returns delivered count. */
   broadcast(text: string): number {
     let delivered = 0;
     for (const link of this.links.values()) {
@@ -215,6 +255,12 @@ class PeerManager {
   private isInitiator(remoteId: string): boolean {
     if (!this.ctx) return false;
     return this.ctx.selfId < remoteId;
+  }
+
+  private looksLikeYjsFrame(raw: string): boolean {
+    // Cheap pre-filter: avoid JSON.parse on every incoming ping-free frame.
+    if (raw.length < 12 || raw.charCodeAt(0) !== 0x7b /* '{' */) return false;
+    return raw.startsWith('{"t":"yjs"') || raw.includes('"t":"yjs"');
   }
 
   private ensureLink(info: {
@@ -260,12 +306,34 @@ class PeerManager {
           state: "connected",
           lastSeen: Date.now(),
         });
+        // Notify subscribers that this DataChannel is now usable.
+        for (const cb of this.linkOpenListeners) {
+          try {
+            cb(info.peerId);
+          } catch (err) {
+            useAppStore
+              .getState()
+              .log(`linkOpen listener failed: ${String(err)}`, "error");
+          }
+        }
       },
       onClose: () => {
         useAppStore.getState().patchPeer(info.peerId, { state: "disconnected" });
       },
       onMessage: (data) => {
-        useAppStore.getState().log(`◀ ${short}: ${data}`, "net");
+        // Keep the network log readable: Yjs frames are frequent and verbose.
+        if (!this.looksLikeYjsFrame(data)) {
+          useAppStore.getState().log(`◀ ${short}: ${data}`, "net");
+        }
+        for (const cb of this.messageListeners) {
+          try {
+            cb(info.peerId, data);
+          } catch (err) {
+            useAppStore
+              .getState()
+              .log(`message listener failed: ${String(err)}`, "error");
+          }
+        }
       },
       onRtt: (ms) => {
         useAppStore.getState().patchPeer(info.peerId, {
