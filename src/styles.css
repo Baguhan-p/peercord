@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+  }
+
+  body {
+    @apply bg-d-900 text-d-text font-sans antialiased;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  ::selection {
+    @apply bg-d-accent/40;
+  }
+}
+
+@layer components {
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: theme("colors.d.500") transparent;
+  }
+
+  .scroll-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scroll-thin::-webkit-scrollbar-thumb {
+    @apply bg-d-500 rounded-full;
+  }
+
+  .scroll-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .rail-item {
+    @apply relative flex h-12 w-12 items-center justify-center rounded-[24px]
+           bg-d-700 text-d-100 transition-all duration-200
+           hover:rounded-[16px] hover:bg-d-accent hover:text-white;
+  }
+
+  .icon-btn {
+    @apply flex h-8 w-8 items-center justify-center rounded-md text-d-300
+           transition-colors hover:bg-d-600 hover:text-d-100;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5
+           text-[11px] font-medium leading-4;
+  }
+}
